@@ -1,11 +1,14 @@
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, text
 
+from app.core.config import get_settings
 from app.db.session import AsyncSessionLocal, engine
 from app.main import app
 from app.models.enums import UserRole
 from app.models.user import User
+from tests.db_guard import UnsafeTestDatabase, assert_local_test_database
 
 ALL_TABLES = (
     "attempt_answers, attempt_questions, attempts, import_batches, "
@@ -14,7 +17,17 @@ ALL_TABLES = (
 )
 
 
+def pytest_configure(config) -> None:
+    # Abort the whole run before any connection is made.
+    try:
+        assert_local_test_database(get_settings().database_url)
+    except UnsafeTestDatabase as exc:
+        raise pytest.UsageError(str(exc)) from None
+
+
 async def _truncate() -> None:
+    # Second line of defence, right before the destructive statement.
+    assert_local_test_database(get_settings().database_url)
     async with engine.begin() as conn:
         await conn.execute(text(f"TRUNCATE {ALL_TABLES} RESTART IDENTITY CASCADE"))
 

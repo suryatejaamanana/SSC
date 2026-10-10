@@ -14,7 +14,7 @@ npm-debug.log*
 
 # Env files
 .env
-.env.*.local
+.env.*
 !.env.example
 
 # Editors / OS

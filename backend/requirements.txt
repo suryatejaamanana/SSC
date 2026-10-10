@@ -11,3 +11,4 @@ email-validator==2.2.0
 python-multipart==0.0.32
 pdfplumber==0.11.10
 pillow==12.3.0
+boto3==1.43.111

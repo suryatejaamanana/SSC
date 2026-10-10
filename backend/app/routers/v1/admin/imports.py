@@ -1,10 +1,13 @@
 from typing import Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user, require_role
+from app.core.config import get_settings
 from app.db.deps import get_db
 from app.models.user import User
 from app.repositories import import_batch_repository
@@ -57,6 +60,14 @@ async def upload_import(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if not get_settings().imports_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "PDF imports are disabled on this deployment (IMPORTS_ENABLED=false). "
+                "Run the import locally with backend/scripts/import_paper.py - see the README."
+            ),
+        )
     pdf_bytes = await pdf_import_service.validate_upload(file)
     batch = await pdf_import_service.run_import(
         db,
@@ -95,8 +106,11 @@ async def download_source_pdf(batch_id: int, db: AsyncSession = Depends(get_db))
     extracted question/option images."""
     batch = await _get_batch_or_404(db, batch_id)
 
-    path = media_storage.source_pdf_path(batch_id)
-    if not path.is_file():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source PDF not found")
-
-    return FileResponse(path, media_type="application/pdf", filename=batch.filename)
+    data = await run_in_threadpool(media_storage.read_source_pdf, batch_id)
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename*=utf-8''{quote(batch.filename)}",
+        },
+    )

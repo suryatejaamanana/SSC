@@ -1,0 +1,36 @@
+# One free Render web service (Next.js + FastAPI in a single container).
+# PostgreSQL lives in Neon and uploaded images live in a PRIVATE Backblaze B2
+# bucket - neither is a Render resource. Every `sync: false` value is entered
+# once in the Render dashboard (Environment tab); none belong in git.
+services:
+  - type: web
+    name: govt-exam
+    runtime: docker
+    plan: free
+    healthCheckPath: /login
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: CORS_ORIGINS
+        value: https://govt-exam.onrender.com
+      # Neon: use the DIRECT (non-"-pooler") connection string.
+      - key: DATABASE_URL
+        sync: false
+      # Free instance has 512MB RAM; a PDF import peaks above that. Import
+      # papers locally with backend/scripts/import_paper.py instead.
+      - key: IMPORTS_ENABLED
+        value: "false"
+      - key: MEDIA_BACKEND
+        value: b2
+      - key: B2_ENDPOINT_URL
+        sync: false
+      - key: B2_BUCKET
+        sync: false
+      - key: B2_KEY_ID
+        sync: false
+      - key: B2_APPLICATION_KEY
+        sync: false

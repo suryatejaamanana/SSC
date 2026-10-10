@@ -29,7 +29,9 @@ ck_questions_publish_readiness constraint).
 
 from __future__ import annotations
 
+import asyncio
 import io
+import logging
 import re
 from datetime import date as date_type
 from decimal import Decimal
@@ -49,6 +51,7 @@ from app.services import exam_service, media_storage, question_service
 from app.services.pdf_extractor import ExtractedQuestion, ExtractedShift, crop_region, extract
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 DEFAULT_POSITIVE_MARKS = Decimal("2.00")
 DEFAULT_NEGATIVE_MARKS = Decimal("0.50")
@@ -265,7 +268,7 @@ def _crop_and_save(
     question_image_url / option.image_url - resolvable by the frontend
     against the backend's own origin and servable only through the
     authenticated GET /api/v1/media/{path} route (see app.routers.v1.media
-    and app.services.media_storage.resolve_media_path)."""
+    and app.services.media_storage.validate_image_key)."""
     image = crop_region(pdf, page_number, bbox)
     relative_path = media_storage.save_image(batch_id, filename, image)
     return f"/api/v1/media/{relative_path}"
@@ -288,9 +291,8 @@ async def run_import(
     db.add(batch)
     await db.commit()
     await db.refresh(batch)
-    media_storage.save_source_pdf(batch.id, pdf_bytes)
-
     try:
+        media_storage.save_source_pdf(batch.id, pdf_bytes)
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             result = extract(pdf)
 
@@ -435,6 +437,28 @@ async def run_import(
         batch.status = ImportStatus.FAILED
         batch.error_log = str(exc)
         await db.commit()
+        await _discard_extracted_images(batch.id)
 
     await db.refresh(batch)
     return batch
+
+
+async def _discard_extracted_images(batch_id: int) -> None:
+    """Best-effort removal of the cropped images a failed import already
+    stored: the DB side was rolled back, so no question references them. The
+    batch's source.pdf is deliberately kept - the failed batch row points to
+    it and admins can still download it to see why the import failed. Runs
+    only after the failed batch row is committed, and never raises: a cleanup
+    problem must not mask the import's original error, so it is only logged
+    (exception type only - no messages that could carry endpoint details).
+    Anything left behind can be deleted by hand under imports/<batch_id>/images/."""
+    try:
+        await asyncio.to_thread(media_storage.delete_batch_images, batch_id)
+    except Exception as cleanup_exc:  # noqa: BLE001 - see docstring
+        logger.warning(
+            "Could not clean up stored files for failed import batch %s (%s); "
+            "delete imports/%s/images/ manually",
+            batch_id,
+            type(cleanup_exc).__name__,
+            batch_id,
+        )
